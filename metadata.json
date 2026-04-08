@@ -1,0 +1,5 @@
+{
+  "name": "PDF Snap - Thumbnail Generator",
+  "description": "Convert PDF files into high-quality image thumbnails with customizable sizes, styles, and quality settings.",
+  "requestFramePermissions": []
+}
