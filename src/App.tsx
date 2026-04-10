@@ -15,7 +15,11 @@ import {
   GripVertical,
   Github,
   FolderOpen,
-  CheckCircle2
+  CheckCircle2,
+  AlertCircle,
+  Video,
+  Camera,
+  BrainCircuit
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -52,6 +56,7 @@ import {
 } from "@/components/ui/tooltip";
 
 import { generateThumbnails, getPageCount, type PDFThumbnail, type ThumbnailOptions, type ThumbnailFormat, type OutputMode } from '@/src/lib/pdf-utils';
+import { generateAICreative } from '@/src/lib/ai-utils';
 import { cn } from '@/lib/utils';
 
 interface QueuedFile {
@@ -71,6 +76,7 @@ export default function App() {
   const [isZipping, setIsZipping] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [thinkSteps, setThinkSteps] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [showLegal, setShowLegal] = useState<'privacy' | 'terms' | 'support' | null>(null);
   const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
   
@@ -82,7 +88,7 @@ export default function App() {
     quality: 85,
     style: 'shadow',
     format: 'image/jpeg',
-    outputMode: 'thumb',
+    outputMode: 'ai-photo',
   });
   const [resolutionPreset, setResolutionPreset] = useState('custom');
   
@@ -145,14 +151,24 @@ export default function App() {
     const pdfFiles = selectedFiles.filter(f => f.type === 'application/pdf');
     
     if (pdfFiles.length > 0) {
+      setError(null);
       const newQueuedFiles: QueuedFile[] = await Promise.all(
         pdfFiles.map(async (f) => {
-          const pageCount = await getPageCount(f).catch(() => undefined);
-          return {
-            id: `${f.name}-${Date.now()}-${Math.random()}`,
-            file: f,
-            pageCount
-          };
+          try {
+            const pageCount = await getPageCount(f);
+            return {
+              id: `${f.name}-${Date.now()}-${Math.random()}`,
+              file: f,
+              pageCount
+            };
+          } catch (err) {
+            setError(`Failed to read ${f.name}. It might be corrupted or protected.`);
+            return {
+              id: `${f.name}-${Date.now()}-${Math.random()}`,
+              file: f,
+              pageCount: undefined
+            };
+          }
         })
       );
       setFiles(prev => [...prev, ...newQueuedFiles]);
@@ -177,14 +193,24 @@ export default function App() {
     const pdfFiles = droppedFiles.filter(f => f.type === 'application/pdf');
     
     if (pdfFiles.length > 0) {
+      setError(null);
       const newQueuedFiles: QueuedFile[] = await Promise.all(
         pdfFiles.map(async (f) => {
-          const pageCount = await getPageCount(f).catch(() => undefined);
-          return {
-            id: `${f.name}-${Date.now()}-${Math.random()}`,
-            file: f,
-            pageCount
-          };
+          try {
+            const pageCount = await getPageCount(f);
+            return {
+              id: `${f.name}-${Date.now()}-${Math.random()}`,
+              file: f,
+              pageCount
+            };
+          } catch (err) {
+            setError(`Failed to read ${f.name}. It might be corrupted or protected.`);
+            return {
+              id: `${f.name}-${Date.now()}-${Math.random()}`,
+              file: f,
+              pageCount: undefined
+            };
+          }
         })
       );
       setFiles(prev => [...prev, ...newQueuedFiles]);
@@ -248,24 +274,55 @@ export default function App() {
     for (let i = 0; i < files.length; i++) {
       if (abortControllerRef.current) break;
       setCurrentFileIndex(i);
-      addStep(`Rendering ${files[i].file.name} (${options.outputMode} mode)...`);
+      addStep(`Processing ${files[i].file.name} (${options.outputMode} mode)...`);
+      
       try {
-        await generateThumbnails(
-          files[i].file, 
-          options, 
-          undefined, 
-          async (newThumb) => {
-            if (abortControllerRef.current) return;
+        if (options.outputMode === 'ai-photo' || options.outputMode === 'ai-animation') {
+          addStep(`Analyzing document content with Gemini AI...`);
+          // For AI modes, we just use the first page as context
+          const firstPageThumbs = await generateThumbnails(files[i].file, { ...options, outputMode: 'thumb', width: 800 });
+          const firstPageBase64 = firstPageThumbs[0].dataUrl?.split(',')[1];
+          
+          if (firstPageBase64) {
+            addStep(`Generating ${options.outputMode === 'ai-photo' ? 'real photo' : 'cinematic animation'}...`);
+            const aiResult = await generateAICreative(firstPageBase64, options.outputMode === 'ai-photo' ? 'photo' : 'animation');
+            
+            const newThumb: PDFThumbnail = {
+              pageNumber: 1,
+              fileName: files[i].file.name,
+              aiImageUrl: aiResult.imageUrl,
+              aiVideoUrl: aiResult.videoUrl,
+              aiPrompt: aiResult.prompt
+            };
+
             setThumbnails(prev => prev.map(t => 
-              (t.fileName === newThumb.fileName && t.pageNumber === newThumb.pageNumber) 
+              (t.fileName === newThumb.fileName && t.pageNumber === 1) 
                 ? newThumb 
                 : t
             ));
+
             if (directoryHandle) {
               await saveToDirectory(newThumb);
             }
           }
-        );
+        } else {
+          await generateThumbnails(
+            files[i].file, 
+            options, 
+            undefined, 
+            async (newThumb) => {
+              if (abortControllerRef.current) return;
+              setThumbnails(prev => prev.map(t => 
+                (t.fileName === newThumb.fileName && t.pageNumber === newThumb.pageNumber) 
+                  ? newThumb 
+                  : t
+              ));
+              if (directoryHandle) {
+                await saveToDirectory(newThumb);
+              }
+            }
+          );
+        }
         setBatchProgress(Math.round(((i + 1) / files.length) * 100));
       } catch (error) {
         console.error(`Error processing ${files[i].file.name}:`, error);
@@ -302,7 +359,7 @@ export default function App() {
     const zip = new JSZip();
     const ext = options.format === 'image/jpeg' ? 'jpg' : 'png';
 
-    thumbnails.forEach((thumb) => {
+    for (const thumb of thumbnails) {
       const baseName = thumb.fileName.replace('.pdf', '');
       
       if (thumb.dataUrl) {
@@ -314,7 +371,22 @@ export default function App() {
         const base64Data = thumb.highResDataUrl.split(',')[1];
         zip.file(`${baseName}/high-res/page_${thumb.pageNumber}_highres.${ext}`, base64Data, { base64: true });
       }
-    });
+
+      if (thumb.aiImageUrl) {
+        const base64Data = thumb.aiImageUrl.split(',')[1];
+        zip.file(`${baseName}/ai-creative/photo_${thumb.pageNumber}.png`, base64Data, { base64: true });
+      }
+
+      if (thumb.aiVideoUrl) {
+        try {
+          const response = await fetch(thumb.aiVideoUrl);
+          const blob = await response.blob();
+          zip.file(`${baseName}/ai-creative/animation_${thumb.pageNumber}.mp4`, blob);
+        } catch (err) {
+          console.error("Failed to include video in zip:", err);
+        }
+      }
+    }
 
     const content = await zip.generateAsync({ type: 'blob' });
     const link = document.createElement('a');
@@ -326,15 +398,24 @@ export default function App() {
     setIsZipping(false);
   };
 
-  const downloadThumbnail = (dataUrl: string, fileName: string, page: number, isHighRes = false) => {
+  const downloadThumbnail = async (url: string, fileName: string, page: number, type: 'thumb' | 'highres' | 'ai-photo' | 'ai-video' = 'thumb') => {
     const link = document.createElement('a');
-    link.href = dataUrl;
-    const ext = options.format === 'image/jpeg' ? 'jpg' : 'png';
-    const suffix = isHighRes ? '_highres' : '';
+    
+    if (type === 'ai-video') {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      link.href = URL.createObjectURL(blob);
+    } else {
+      link.href = url;
+    }
+
+    const ext = type === 'ai-video' ? 'mp4' : (options.format === 'image/jpeg' ? 'jpg' : 'png');
+    const suffix = type === 'highres' ? '_highres' : (type === 'ai-photo' ? '_ai_photo' : (type === 'ai-video' ? '_ai_anim' : ''));
     link.download = `${fileName.replace('.pdf', '')}_page_${page}${suffix}.${ext}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    if (type === 'ai-video') URL.revokeObjectURL(link.href);
   };
 
   const reset = () => {
@@ -443,6 +524,24 @@ export default function App() {
         </header>
 
         <main className="max-w-7xl mx-auto px-4 py-8">
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-6 bg-red-50 border border-red-100 text-red-700 px-4 py-3 rounded-xl flex items-center gap-3 shadow-sm"
+            >
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <p className="text-sm font-medium">{error}</p>
+              <Button 
+                variant="ghost" 
+                size="icon-xs" 
+                onClick={() => setError(null)}
+                className="ml-auto text-red-600 hover:bg-red-100"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </motion.div>
+          )}
           <div className="grid lg:grid-cols-[350px_1fr] gap-8">
             
             {/* Sidebar Settings */}
@@ -467,24 +566,51 @@ export default function App() {
                       className="w-full"
                       disabled={isBusy}
                     >
-                      <TabsList className="grid w-full grid-cols-3">
+                      <TabsList className="grid w-full grid-cols-5 h-auto p-1 gap-1 bg-slate-100/50">
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <TabsTrigger value="thumb" className="text-[10px]">Thumb</TabsTrigger>
+                            <TabsTrigger value="thumb" className="text-[9px] py-2">
+                              <ImageIcon className="w-3 h-3 mb-1 block mx-auto" />
+                              Thumb
+                            </TabsTrigger>
                           </TooltipTrigger>
-                          <TooltipContent>Generate small previews</TooltipContent>
+                          <TooltipContent>Standard previews</TooltipContent>
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <TabsTrigger value="image" className="text-[10px]">Image</TabsTrigger>
+                            <TabsTrigger value="image" className="text-[9px] py-2">
+                              <ImageIcon className="w-3 h-3 mb-1 block mx-auto" />
+                              Image
+                            </TabsTrigger>
                           </TooltipTrigger>
-                          <TooltipContent>Generate high-res images</TooltipContent>
+                          <TooltipContent>High-res images</TooltipContent>
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <TabsTrigger value="both" className="text-[10px]">Both</TabsTrigger>
+                            <TabsTrigger value="both" className="text-[9px] py-2">
+                              <Layers className="w-3 h-3 mb-1 block mx-auto" />
+                              Both
+                            </TabsTrigger>
                           </TooltipTrigger>
-                          <TooltipContent>Generate both formats</TooltipContent>
+                          <TooltipContent>Both formats</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TabsTrigger value="ai-photo" className="text-[9px] py-2 bg-blue-50 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
+                              <Camera className="w-3 h-3 mb-1 block mx-auto" />
+                              AI Photo
+                            </TabsTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>AI-generated "real" photo</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <TabsTrigger value="ai-animation" className="text-[9px] py-2 bg-purple-50 data-[state=active]:bg-purple-600 data-[state=active]:text-white">
+                              <Video className="w-3 h-3 mb-1 block mx-auto" />
+                              AI Anim
+                            </TabsTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>AI-generated cinematic video</TooltipContent>
                         </Tooltip>
                       </TabsList>
                     </Tabs>
@@ -584,7 +710,7 @@ export default function App() {
                   <div className="space-y-3">
                     <Label className="text-xs font-bold uppercase text-slate-500">Visual Style</Label>
                     <div className="grid grid-cols-2 gap-2">
-                      {(['plain', 'shadow', 'border', 'rounded'] as const).map((style) => (
+                      {(['plain', 'shadow', 'border', 'rounded', 'glossy'] as const).map((style) => (
                         <Button
                           key={style}
                           variant={options.style === style ? 'default' : 'outline'}
@@ -838,23 +964,35 @@ export default function App() {
                                     <Card 
                                       className={cn(
                                         "group overflow-hidden border-slate-200 transition-all duration-300 hover:shadow-xl hover:shadow-blue-500/5 cursor-pointer",
-                                        (thumb.dataUrl || thumb.highResDataUrl) ? "hover:border-blue-300" : "opacity-70 grayscale pointer-events-none"
+                                        (thumb.dataUrl || thumb.highResDataUrl || thumb.aiImageUrl || thumb.aiVideoUrl) ? "hover:border-blue-300" : "opacity-70 grayscale pointer-events-none"
                                       )}
-                                      onClick={() => (thumb.dataUrl || thumb.highResDataUrl) && setSelectedThumb(thumb)}
+                                      onClick={() => (thumb.dataUrl || thumb.highResDataUrl || thumb.aiImageUrl || thumb.aiVideoUrl) && setSelectedThumb(thumb)}
                                     >
                                       <div className="aspect-[3/4] bg-white relative flex items-center justify-center p-4">
-                                        {(thumb.dataUrl || thumb.highResDataUrl) ? (
+                                        {(thumb.dataUrl || thumb.highResDataUrl || thumb.aiImageUrl || thumb.aiVideoUrl) ? (
                                           <>
-                                            <img 
-                                              src={thumb.dataUrl || thumb.highResDataUrl} 
-                                              alt={`Page ${thumb.pageNumber}`}
-                                              className={cn(
-                                                "max-w-full max-h-full transition-transform duration-500 group-hover:scale-105",
-                                                options.style === 'shadow' && "shadow-2xl shadow-black/20",
-                                                options.style === 'border' && "border border-slate-200",
-                                                options.style === 'rounded' && "rounded-lg shadow-lg"
-                                              )}
-                                            />
+                                            {thumb.aiVideoUrl ? (
+                                              <video 
+                                                src={thumb.aiVideoUrl} 
+                                                autoPlay 
+                                                loop 
+                                                muted 
+                                                playsInline
+                                                className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+                                              />
+                                            ) : (
+                                              <img 
+                                                src={thumb.aiImageUrl || thumb.dataUrl || thumb.highResDataUrl} 
+                                                alt={`Page ${thumb.pageNumber}`}
+                                                className={cn(
+                                                  "max-w-full max-h-full transition-transform duration-500 group-hover:scale-105",
+                                                  options.style === 'shadow' && "shadow-2xl shadow-black/20",
+                                                  options.style === 'border' && "border border-slate-200",
+                                                  options.style === 'rounded' && "rounded-lg shadow-lg",
+                                                  options.style === 'glossy' && "rounded-lg shadow-xl ring-1 ring-white/20 bg-gradient-to-tr from-white/10 to-white/30"
+                                                )}
+                                              />
+                                            )}
                                             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                                               <Tooltip>
                                                 <TooltipTrigger asChild>
@@ -874,6 +1012,11 @@ export default function App() {
                                                 <TooltipContent>Preview large version</TooltipContent>
                                               </Tooltip>
                                             </div>
+                                            {thumb.aiPrompt && (
+                                              <div className="absolute bottom-2 right-2">
+                                                <Badge className="bg-blue-600/90 text-[8px] uppercase tracking-tighter">AI Generated</Badge>
+                                              </div>
+                                            )}
                                           </>
                                         ) : (
                                           <div className="flex flex-col items-center gap-3">
@@ -889,9 +1032,47 @@ export default function App() {
                                       </div>
                                       <CardFooter className="p-3 bg-white border-t flex justify-between items-center">
                                         <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">
-                                          {options.format.split('/')[1].toUpperCase()}
+                                          {thumb.aiVideoUrl ? 'MP4' : (thumb.aiImageUrl ? 'PNG' : options.format.split('/')[1].toUpperCase())}
                                         </span>
                                         <div className="flex gap-1">
+                                          {thumb.aiImageUrl && (
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <Button 
+                                                  variant="ghost" 
+                                                  size="sm" 
+                                                  className="h-7 text-[10px] font-bold uppercase tracking-wider text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                                  disabled={isBusy}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    downloadThumbnail(thumb.aiImageUrl!, thumb.fileName, thumb.pageNumber, 'ai-photo');
+                                                  }}
+                                                >
+                                                  Photo
+                                                </Button>
+                                              </TooltipTrigger>
+                                              <TooltipContent>Download AI Photo</TooltipContent>
+                                            </Tooltip>
+                                          )}
+                                          {thumb.aiVideoUrl && (
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <Button 
+                                                  variant="ghost" 
+                                                  size="sm" 
+                                                  className="h-7 text-[10px] font-bold uppercase tracking-wider text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                                                  disabled={isBusy}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    downloadThumbnail(thumb.aiVideoUrl!, thumb.fileName, thumb.pageNumber, 'ai-video');
+                                                  }}
+                                                >
+                                                  Anim
+                                                </Button>
+                                              </TooltipTrigger>
+                                              <TooltipContent>Download AI Animation</TooltipContent>
+                                            </Tooltip>
+                                          )}
                                           {thumb.dataUrl && (
                                             <Tooltip>
                                               <TooltipTrigger asChild>
@@ -921,7 +1102,7 @@ export default function App() {
                                                   disabled={isBusy}
                                                   onClick={(e) => {
                                                     e.stopPropagation();
-                                                    downloadThumbnail(thumb.highResDataUrl!, thumb.fileName, thumb.pageNumber, true);
+                                                    downloadThumbnail(thumb.highResDataUrl!, thumb.fileName, thumb.pageNumber, 'highres');
                                                   }}
                                                 >
                                                   HD
@@ -952,19 +1133,64 @@ export default function App() {
         <Dialog open={!!selectedThumb} onOpenChange={(open) => !open && setSelectedThumb(null)}>
           <DialogContent className="max-w-4xl max-h-[90vh] p-0 overflow-hidden border-none bg-transparent shadow-none">
             <div className="relative w-full h-full flex flex-col items-center justify-center gap-4">
-              <div className="bg-white rounded-2xl p-4 shadow-2xl max-h-[80vh] overflow-auto">
-                <img 
-                  src={selectedThumb?.highResDataUrl || selectedThumb?.dataUrl} 
-                  alt="Preview" 
-                  className="max-w-full h-auto rounded-lg"
-                />
+              <div className="bg-white rounded-2xl p-4 shadow-2xl max-h-[80vh] overflow-auto w-full max-w-3xl">
+                {selectedThumb?.aiVideoUrl ? (
+                  <video 
+                    src={selectedThumb.aiVideoUrl} 
+                    controls 
+                    autoPlay 
+                    loop 
+                    className="w-full h-auto rounded-lg shadow-lg"
+                  />
+                ) : (
+                  <img 
+                    src={selectedThumb?.aiImageUrl || selectedThumb?.highResDataUrl || selectedThumb?.dataUrl} 
+                    alt="Preview" 
+                    className="w-full h-auto rounded-lg"
+                  />
+                )}
+                
+                {selectedThumb?.aiPrompt && (
+                  <div className="mt-6 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                    <div className="flex items-center gap-2 mb-2 text-blue-600">
+                      <BrainCircuit className="w-4 h-4" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider">AI Creative Prompt</span>
+                    </div>
+                    <p className="text-sm text-slate-600 italic leading-relaxed">
+                      "{selectedThumb.aiPrompt}"
+                    </p>
+                  </div>
+                )}
               </div>
-              <div className="flex gap-3 bg-white/90 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-white/20">
+              <div className="flex flex-wrap justify-center gap-3 bg-white/90 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-white/20">
                 <div className="flex flex-col">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Page {selectedThumb?.pageNumber}</span>
                   <span className="text-xs font-medium truncate max-w-[200px]">{selectedThumb?.fileName}</span>
                 </div>
-                <Separator orientation="vertical" className="h-8" />
+                <Separator orientation="vertical" className="h-8 hidden sm:block" />
+                
+                {selectedThumb?.aiImageUrl && (
+                  <Button 
+                    size="sm" 
+                    className="bg-blue-600 hover:bg-blue-700"
+                    onClick={() => selectedThumb && downloadThumbnail(selectedThumb.aiImageUrl!, selectedThumb.fileName, selectedThumb.pageNumber, 'ai-photo')}
+                  >
+                    <Camera className="w-4 h-4 mr-2" />
+                    AI Photo
+                  </Button>
+                )}
+
+                {selectedThumb?.aiVideoUrl && (
+                  <Button 
+                    size="sm" 
+                    className="bg-purple-600 hover:bg-purple-700"
+                    onClick={() => selectedThumb && downloadThumbnail(selectedThumb.aiVideoUrl!, selectedThumb.fileName, selectedThumb.pageNumber, 'ai-video')}
+                  >
+                    <Video className="w-4 h-4 mr-2" />
+                    AI Animation
+                  </Button>
+                )}
+
                 {selectedThumb?.dataUrl && (
                   <Button 
                     size="sm" 
@@ -979,10 +1205,10 @@ export default function App() {
                   <Button 
                     size="sm" 
                     className="bg-emerald-600 hover:bg-emerald-700"
-                    onClick={() => selectedThumb && downloadThumbnail(selectedThumb.highResDataUrl!, selectedThumb.fileName, selectedThumb.pageNumber, true)}
+                    onClick={() => selectedThumb && downloadThumbnail(selectedThumb.highResDataUrl!, selectedThumb.fileName, selectedThumb.pageNumber, 'highres')}
                   >
                     <Zap className="w-4 h-4 mr-2" />
-                    Download HD
+                    HD Image
                   </Button>
                 )}
                 <Button 

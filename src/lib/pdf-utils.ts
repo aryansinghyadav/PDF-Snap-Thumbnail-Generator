@@ -1,7 +1,15 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Set worker path to CDN for simplicity in this environment
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+// Try to use the local worker first, with a CDN fallback
+const LOCAL_WORKER_URL = new URL(
+  'pdfjs-dist/build/pdf.worker.mjs',
+  import.meta.url
+).toString();
+
+const CDN_WORKER_URL = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+// Set the worker source. We'll start with the local one.
+pdfjsLib.GlobalWorkerOptions.workerSrc = LOCAL_WORKER_URL;
 
 export type ThumbnailFormat = 'image/jpeg' | 'image/png';
 
@@ -12,20 +20,36 @@ export interface ThumbnailOptions {
   format: ThumbnailFormat;
 }
 
-export type OutputMode = 'thumb' | 'image' | 'both';
+export type OutputMode = 'thumb' | 'image' | 'both' | 'ai-photo' | 'ai-animation';
 
 export interface PDFThumbnail {
   pageNumber: number;
   dataUrl?: string;
   highResDataUrl?: string;
+  aiImageUrl?: string;
+  aiVideoUrl?: string;
+  aiPrompt?: string;
   fileName: string;
 }
 
 export async function getPageCount(file: File): Promise<number> {
-  const arrayBuffer = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-  const pdf = await loadingTask.promise;
-  return pdf.numPages;
+  console.log(`[PDFUtils] Getting page count for: ${file.name}`);
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+    console.log(`[PDFUtils] Successfully loaded PDF: ${file.name}, pages: ${pdf.numPages}`);
+    return pdf.numPages;
+  } catch (error) {
+    console.warn(`[PDFUtils] Error with primary worker, trying fallback...`, error);
+    // Fallback to CDN if local worker fails
+    if (pdfjsLib.GlobalWorkerOptions.workerSrc !== CDN_WORKER_URL) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = CDN_WORKER_URL;
+      return getPageCount(file);
+    }
+    console.error(`[PDFUtils] Error reading PDF ${file.name} even with fallback:`, error);
+    throw error;
+  }
 }
 
 export async function generateThumbnails(
@@ -34,14 +58,17 @@ export async function generateThumbnails(
   onProgress?: (progress: number) => void,
   onPageGenerated?: (thumb: PDFThumbnail) => void
 ): Promise<PDFThumbnail[]> {
-  const arrayBuffer = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-  const pdf = await loadingTask.promise;
-  const numPages = pdf.numPages;
-  const thumbnails: PDFThumbnail[] = [];
+  console.log(`[PDFUtils] Generating thumbnails for: ${file.name}, mode: ${options.outputMode}`);
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+    const numPages = pdf.numPages;
+    const thumbnails: PDFThumbnail[] = [];
 
-  for (let i = 1; i <= numPages; i++) {
-    const page = await pdf.getPage(i);
+    for (let i = 1; i <= numPages; i++) {
+      console.log(`[PDFUtils] Rendering page ${i}/${numPages} for ${file.name}`);
+      const page = await pdf.getPage(i);
     const viewport = page.getViewport({ scale: 1 });
     
     let dataUrl: string | undefined;
@@ -93,4 +120,13 @@ export async function generateThumbnails(
   }
 
   return thumbnails;
+} catch (error) {
+  console.warn(`[PDFUtils] Error with primary worker in generation, trying fallback...`, error);
+  if (pdfjsLib.GlobalWorkerOptions.workerSrc !== CDN_WORKER_URL) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = CDN_WORKER_URL;
+    return generateThumbnails(file, options, onProgress, onPageGenerated);
+  }
+  console.error(`[PDFUtils] Error generating thumbnails for ${file.name} even with fallback:`, error);
+  throw error;
+}
 }
