@@ -16,7 +16,7 @@ export type ThumbnailFormat = 'image/jpeg' | 'image/png';
 export interface ThumbnailOptions {
   width: number;
   quality: number;
-  style: 'plain' | 'shadow' | 'border' | 'rounded';
+  style: 'plain' | 'shadow' | 'border' | 'rounded' | 'glossy';
   format: ThumbnailFormat;
 }
 

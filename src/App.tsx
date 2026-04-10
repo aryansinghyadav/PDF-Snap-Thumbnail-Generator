@@ -19,7 +19,8 @@ import {
   AlertCircle,
   Video,
   Camera,
-  BrainCircuit
+  BrainCircuit,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -226,7 +227,8 @@ export default function App() {
   const processBatch = async () => {
     if (files.length === 0) return;
     
-    abortControllerRef.current = false;
+    try {
+      abortControllerRef.current = false;
     setIsProcessing(true);
     setBatchProgress(0);
     setIsThinking(true);
@@ -341,8 +343,10 @@ export default function App() {
       });
     }
 
-    setIsThinking(false);
-    setIsProcessing(false);
+    } finally {
+      setIsThinking(false);
+      setIsProcessing(false);
+    }
   };
 
   const cancelProcess = () => {
@@ -500,24 +504,27 @@ export default function App() {
             
             <div className="flex items-center gap-4">
               {files.length > 0 && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={reset} 
-                      disabled={isBusy}
-                      className="text-slate-500 hover:text-red-600"
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Clear All
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Reset queue and previews (Esc)</TooltipContent>
-                </Tooltip>
+                <div className="flex items-center gap-2">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={reset} 
+                        disabled={isBusy}
+                        className="text-slate-500 hover:text-red-600 h-8 px-3 rounded-full"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 mr-2" />
+                        Reset
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Clear all files and previews</TooltipContent>
+                  </Tooltip>
+                  <Separator orientation="vertical" className="h-4" />
+                </div>
               )}
-              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-100 font-medium">
-                v1.3.0
+              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-100 font-bold px-3 py-1 animate-pulse">
+                STABLE v1.4.0
               </Badge>
             </div>
           </div>
@@ -566,10 +573,10 @@ export default function App() {
                       className="w-full"
                       disabled={isBusy}
                     >
-                      <TabsList className="grid w-full grid-cols-5 h-auto p-1 gap-1 bg-slate-100/50">
+                      <TabsList className="grid w-full grid-cols-5 h-auto p-1 gap-1 bg-slate-100/50 rounded-xl">
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <TabsTrigger value="thumb" className="text-[9px] py-2">
+                            <TabsTrigger value="thumb" className="text-[9px] py-2 rounded-lg">
                               <ImageIcon className="w-3 h-3 mb-1 block mx-auto" />
                               Thumb
                             </TabsTrigger>
@@ -578,7 +585,7 @@ export default function App() {
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <TabsTrigger value="image" className="text-[9px] py-2">
+                            <TabsTrigger value="image" className="text-[9px] py-2 rounded-lg">
                               <ImageIcon className="w-3 h-3 mb-1 block mx-auto" />
                               Image
                             </TabsTrigger>
@@ -587,7 +594,7 @@ export default function App() {
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <TabsTrigger value="both" className="text-[9px] py-2">
+                            <TabsTrigger value="both" className="text-[9px] py-2 rounded-lg">
                               <Layers className="w-3 h-3 mb-1 block mx-auto" />
                               Both
                             </TabsTrigger>
@@ -596,21 +603,21 @@ export default function App() {
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <TabsTrigger value="ai-photo" className="text-[9px] py-2 bg-blue-50 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
+                            <TabsTrigger value="ai-photo" className="text-[9px] py-2 rounded-lg bg-blue-50 data-[state=active]:bg-blue-600 data-[state=active]:text-white transition-all duration-300">
                               <Camera className="w-3 h-3 mb-1 block mx-auto" />
                               AI Photo
                             </TabsTrigger>
                           </TooltipTrigger>
-                          <TooltipContent>AI-generated "real" photo</TooltipContent>
+                          <TooltipContent>AI-generated photo (Recommended)</TooltipContent>
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <TabsTrigger value="ai-animation" className="text-[9px] py-2 bg-purple-50 data-[state=active]:bg-purple-600 data-[state=active]:text-white">
+                            <TabsTrigger value="ai-animation" className="text-[9px] py-2 rounded-lg bg-purple-50 data-[state=active]:bg-purple-600 data-[state=active]:text-white transition-all duration-300">
                               <Video className="w-3 h-3 mb-1 block mx-auto" />
                               AI Anim
                             </TabsTrigger>
                           </TooltipTrigger>
-                          <TooltipContent>AI-generated cinematic video</TooltipContent>
+                          <TooltipContent>AI-generated animation</TooltipContent>
                         </Tooltip>
                       </TabsList>
                     </Tabs>
@@ -893,16 +900,74 @@ export default function App() {
                 <div className="space-y-6">
                   {/* Batch Status Bar */}
                   {isProcessing && (
-                    <div className="bg-white p-6 rounded-2xl border shadow-sm space-y-4">
-                      <div className="flex justify-between items-end">
-                        <div>
-                          <h3 className="font-bold text-slate-900">Processing Batch...</h3>
-                          <p className="text-xs text-slate-500">File {currentFileIndex + 1} of {files.length}: {files[currentFileIndex].file.name}</p>
-                        </div>
-                        <span className="text-sm font-bold text-blue-600">{batchProgress}%</span>
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-white p-6 rounded-3xl border-2 border-blue-100 shadow-xl shadow-blue-500/5 space-y-6 relative overflow-hidden"
+                    >
+                      <div className="absolute top-0 left-0 w-full h-1 bg-slate-100">
+                        <motion.div 
+                          className="h-full bg-blue-600"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${batchProgress}%` }}
+                          transition={{ duration: 0.5 }}
+                        />
                       </div>
-                      <Progress value={batchProgress} className="h-2" />
-                    </div>
+
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center">
+                            <BrainCircuit className="w-6 h-6 text-blue-600 animate-pulse" />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-900 text-lg">AI Agent Processing...</h3>
+                            <p className="text-sm text-slate-500 font-medium">
+                              File {currentFileIndex + 1} of {files.length}: <span className="text-blue-600">{files[currentFileIndex].file.name}</span>
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <span className="text-2xl font-black text-blue-600 leading-none">{batchProgress}%</span>
+                          <Button 
+                            variant="destructive" 
+                            size="sm" 
+                            onClick={cancelProcess}
+                            className="rounded-full px-4 h-8 text-[10px] font-bold uppercase tracking-widest"
+                          >
+                            <X className="w-3 h-3 mr-2" />
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+
+                      {isThinking && (
+                        <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="flex gap-1">
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" />
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Agent Log</span>
+                          </div>
+                          <ScrollArea className="h-24">
+                            <div className="space-y-2">
+                              {thinkSteps.map((step, idx) => (
+                                <motion.div 
+                                  key={idx}
+                                  initial={{ opacity: 0, x: -10 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  className="flex items-start gap-2 text-xs text-slate-600 font-mono"
+                                >
+                                  <span className="text-blue-400 shrink-0 mt-0.5">›</span>
+                                  <span>{step}</span>
+                                </motion.div>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </div>
+                      )}
+                    </motion.div>
                   )}
 
                   {/* Previews Grid */}
